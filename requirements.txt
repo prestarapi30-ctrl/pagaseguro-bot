@@ -1,2 +1,6 @@
-python-telegram-bot==20.3
+Flask
+Werkzeug
+PyJWT
 requests
+python-telegram-bot
+python-dotenv
