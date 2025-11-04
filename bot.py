@@ -21,6 +21,7 @@ STAFF_CHAT_ID = os.environ.get("STAFF_CHAT_ID", "")
 # ----------------------------
 import sqlite3
 conn = sqlite3.connect("bot_users.db", check_same_thread=False)
+conn.row_factory = sqlite3.Row
 cur = conn.cursor()
 
 # Tabla de enlaces Telegram-usuario
@@ -84,16 +85,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Guardar enlace
     upsert_telegram_link(chat_id=str(chat_id), telegram_username=tg_username, bound_username=tg_username)
 
+    # Mensaje de bienvenida con emojis y pasos
     msg = [
-        f"Hola @{tg_username}, bienvenido al bot de recargas.",
+        f"🎉 Hola @{tg_username}, bienvenido al bot de recargas de SERVIS!",
         "",
-        "Envía una foto del comprobante de pago aquí.",
+        "🔹 Pasos para recargar saldo:",
+        "1️⃣ Envía una foto de tu comprobante de pago.",
+        "2️⃣ Un administrador validará tu recarga.",
+        "3️⃣ Recibirás una notificación cuando tu saldo sea acreditado.",
+        "",
+        "💡 Consejo: asegúrate de que la foto sea clara y legible.",
     ]
+
     if method and amount:
-        msg.append(f"Intento de recarga registrado: {method} {amount}")
+        msg.append("")
+        msg.append(f"✅ Intento registrado: {method} por S/{amount:.2f}")
 
     await update.message.reply_text("\n".join(msg))
-
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo = update.message.photo[-1] if update.message.photo else None
@@ -103,38 +111,39 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Buscar usuario vinculado
     cur.execute("SELECT bound_username FROM telegram_links WHERE chat_id=?", (chat_id,))
     row = cur.fetchone()
-    username = row[0] if row else f"user{chat_id}"
+    username = row["bound_username"] if row else f"user{chat_id}"
 
     add_transaction(username, 0, "YAPE/USDT/EFECTIVO", status="proof_submitted", proof_file_id=file_id)
 
-    # Notificar staff
+    # Confirmación visual al usuario
+    await update.message.reply_text("📸 Comprobante recibido.\nUn administrador lo revisará pronto. ¡Gracias por tu recarga!")
+
+    # Reenviar la foto al staff con detalles
     if STAFF_CHAT_ID:
         try:
-            await context.bot.send_message(
+            await context.bot.send_photo(
                 chat_id=int(STAFF_CHAT_ID),
-                text=f"Comprobante recibido de @{username}. file_id={file_id}"
+                photo=file_id,
+                caption=f"🚨 Nuevo comprobante recibido:\n👤 Usuario: @{username}\n💳 Método: YAPE/USDT/EFECTIVO\n🆔 File ID: {file_id}"
             )
         except Exception:
             pass
 
-    await update.message.reply_text("Comprobante recibido. Un admin lo revisará.")
-
-
 async def ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     caller = update.effective_user.username or ""
     if caller not in ADMINS:
-        await update.message.reply_text("No autorizado.")
+        await update.message.reply_text("❌ No autorizado.")
         return
 
     if len(context.args) < 2:
-        await update.message.reply_text("Uso: /ok @usuario monto")
+        await update.message.reply_text("❗ Uso: /ok @usuario monto")
         return
 
     username = context.args[0].lstrip("@")
     try:
         amount = float(context.args[1])
     except:
-        await update.message.reply_text("Monto inválido")
+        await update.message.reply_text("❗ Monto inválido")
         return
 
     # Llamar API para acreditar saldo
@@ -146,13 +155,12 @@ async def ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
             timeout=10,
         )
         data = resp.json()
-        if resp.status_code == 200:
-            await update.message.reply_text(f"Saldo acreditado a {username}: {amount}")
+        if resp.status_code == 200 and data.get("ok"):
+            await update.message.reply_text(f"✅ Saldo acreditado a {username}: S/{amount:.2f}")
         else:
-            await update.message.reply_text(f"Error: {data}")
+            await update.message.reply_text(f"❌ Error al acreditar: {data}")
     except Exception as e:
-        await update.message.reply_text(f"Error API: {e}")
-
+        await update.message.reply_text(f"❌ Error API: {e}")
 
 # ----------------------------
 # Inicialización del bot
@@ -164,8 +172,9 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(CommandHandler("ok", ok))
+    print("🤖 Bot iniciado. Esperando mensajes...")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
+
