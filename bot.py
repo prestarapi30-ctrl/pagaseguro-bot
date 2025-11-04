@@ -10,7 +10,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 STAFF_CHAT_ID = int(os.environ.get("STAFF_CHAT_ID", "0"))
 ADMINS = list(map(int, os.environ.get("ADMINS", "").split(",")))
 API_SECRET = os.environ.get("API_SECRET", "")
-API_URL = "https://tumanzanita.store/api/agregar_saldo"
+API_URL = "https://saldo-api.onrender.com/api/agregar_saldo"
 
 # Base de datos local para registrar transacciones
 conn = sqlite3.connect("transactions.db", check_same_thread=False)
@@ -119,3 +119,4 @@ app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 app.add_handler(CommandHandler("ok", validar))
 
 app.run_polling()
+
