@@ -5,6 +5,7 @@ from datetime import datetime
 
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+import sqlite3
 
 # ----------------------------
 # Cargar variables de entorno
@@ -14,12 +15,11 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 API_SECRET = os.environ.get("API_SECRET", "")
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://127.0.0.1:5001")
 ADMINS = [u.strip() for u in os.environ.get("ADMINS", "").split(',') if u.strip()]
-STAFF_CHAT_ID = os.environ.get("STAFF_CHAT_ID", "")
+STAFF_CHAT_ID = os.environ.get("STAFF_CHAT_ID", None)
 
 # ----------------------------
-# Base de datos simple en memoria
+# Base de datos SQLite
 # ----------------------------
-import sqlite3
 conn = sqlite3.connect("bot_users.db", check_same_thread=False)
 conn.row_factory = sqlite3.Row
 cur = conn.cursor()
@@ -76,29 +76,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parts = args[0].split("_")
             method = parts[0].upper()
             amount = float(parts[1]) if len(parts) > 1 else None
-        except Exception:
+        except:
             method, amount = None, None
 
     chat_id = update.effective_chat.id
     tg_username = update.effective_user.username or f"user{chat_id}"
 
-    # Guardar enlace
-    upsert_telegram_link(chat_id=str(chat_id), telegram_username=tg_username, bound_username=tg_username)
+    upsert_telegram_link(str(chat_id), tg_username, tg_username)
 
-    # Mensaje de bienvenida
     msg = [
-        f"🎉 Hola @{tg_username}, bienvenido al bot de recargas de SERVIS!",
-        "",
-        "🔹 Pasos para recargar saldo:",
-        "1️⃣ Envía una foto de tu comprobante de pago.",
-        "2️⃣ Un administrador validará tu recarga.",
-        "3️⃣ Recibirás una notificación cuando tu saldo sea acreditado.",
-        "",
-        "💡 Consejo: asegúrate de que la foto sea clara y legible.",
+        f"🎉 Hola @{tg_username}, bienvenido al bot de recargas!",
+        "🔹 Envía una foto del comprobante de pago aquí.",
+        "🔹 Un admin validará tu recarga y recibirás notificación cuando se acredite tu saldo.",
+        "💡 Consejo: asegúrate de que la foto sea clara y legible."
     ]
-
     if method and amount:
-        msg.append("")
         msg.append(f"✅ Intento registrado: {method} por S/{amount:.2f}")
 
     await update.message.reply_text("\n".join(msg))
@@ -108,23 +100,20 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_id = photo.file_id if photo else None
     chat_id = str(update.effective_chat.id)
 
-    # Buscar usuario vinculado
     cur.execute("SELECT bound_username FROM telegram_links WHERE chat_id=?", (chat_id,))
     row = cur.fetchone()
     username = row["bound_username"] if row else f"user{chat_id}"
 
     add_transaction(username, 0, "YAPE/USDT/EFECTIVO", status="proof_submitted", proof_file_id=file_id)
 
-    # Confirmación al usuario
     await update.message.reply_text("📸 Comprobante recibido. Un admin lo revisará pronto. ¡Gracias por tu recarga!")
 
-    # Reenviar la foto al staff como foto, no texto
     if STAFF_CHAT_ID and photo:
         try:
             await context.bot.send_photo(
                 chat_id=int(STAFF_CHAT_ID),
                 photo=file_id,
-                caption=f"🚨 Nuevo comprobante recibido:\n👤 Usuario: @{username}\n💳 Método: YAPE/USDT/EFECTIVO"
+                caption=f"🚨 Nuevo comprobante recibido\n👤 Usuario: @{username}\n💳 Método: YAPE/USDT/EFECTIVO"
             )
         except Exception as e:
             print(f"Error al enviar foto al staff: {e}")
@@ -154,11 +143,15 @@ async def ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
             headers={"X-SECRET-KEY": API_SECRET},
             timeout=10,
         )
-        data = resp.json()
-        if resp.status_code == 200 and data.get("ok"):
+        try:
+            data = resp.json()
+        except:
+            data = resp.text  # muestra el contenido si no es JSON
+
+        if resp.status_code == 200 and isinstance(data, dict) and data.get("ok"):
             await update.message.reply_text(f"✅ Saldo acreditado a {username}: S/{amount:.2f}")
         else:
-            await update.message.reply_text(f"❌ Error al acreditar: {data}")
+            await update.message.reply_text(f"❌ Error al acreditar: {data} (status {resp.status_code})")
     except Exception as e:
         await update.message.reply_text(f"❌ Error API: {e}")
 
