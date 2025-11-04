@@ -1,64 +1,85 @@
 import os
+import logging
+from dotenv import load_dotenv
 import requests
 from datetime import datetime
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
 from db import init_db, get_conn, upsert_telegram_link, set_pending_intent, get_pending_intent, add_transaction
 
-
+# ----------------------------
+# Load environment
+# ----------------------------
+load_dotenv()
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+BOT_USERNAME = os.environ.get("BOT_USERNAME", "")
 API_SECRET = os.environ.get("API_SECRET", "")
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://127.0.0.1:5001")
-ADMINS = [u.strip() for u in os.environ.get("ADMINS", "").split(',') if u.strip()]
+ADMINS = [u.strip() for u in os.environ.get("ADMINS", "").split(",") if u.strip()]
 STAFF_CHAT_ID = os.environ.get("STAFF_CHAT_ID", "")
 
+# ----------------------------
+# Logging
+# ----------------------------
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+
+logger = logging.getLogger(__name__)
+
+# ----------------------------
+# Handlers
+# ----------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler for /start command"""
     args = context.args
-    method = None
-    amount = None
+    method, amount = None, None
     if args:
         try:
-            token = args[0]
-            parts = token.split('_')
+            parts = args[0].split("_")
             method = parts[0].upper()
             amount = float(parts[1]) if len(parts) > 1 else None
         except Exception:
             method, amount = None, None
 
     chat_id = update.effective_chat.id
-    tg_username = update.effective_user.username  # may be None
+    tg_username = update.effective_user.username
 
-    # Store link
-    # Bind to same username if the site username equals their Telegram @username
+    # Save telegram link
     upsert_telegram_link(chat_id=str(chat_id), telegram_username=tg_username, bound_username=tg_username)
 
-    # If we have a method intent, store it for this chat
+    # Save pending intent if method+amount provided
     if method and amount and amount > 0:
         set_pending_intent(chat_id=str(chat_id), method=method, amount=amount)
 
     msg = [
-        "Bienvenido al bot de recargas de SERVIS.",
+        "👋 Bienvenido al bot de recargas.",
         "",
         "Pasos:",
         "1) Envía una foto del comprobante del pago aquí.",
-        "2) Un admin validará y acreditará tu saldo.",
+        "2) Un admin validará y acreditará tu saldo."
     ]
     if method and amount:
-        msg.append("")
-        msg.append(f"Intento registrado: {method} por {amount}.")
+        msg.append(f"\nIntento registrado: {method} {amount}")
 
     await update.message.reply_text("\n".join(msg))
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle payment proof photos"""
     photo = update.message.photo[-1] if update.message.photo else None
-    file_id = photo.file_id if photo else None
+    if not photo:
+        await update.message.reply_text("⚠️ No se recibió ninguna foto.")
+        return
+
+    file_id = photo.file_id
     chat_id = update.effective_chat.id
 
-    # Look up pending intent and bound username
+    # Lookup pending intent
     intent = get_pending_intent(str(chat_id))
     conn = get_conn()
     cur = conn.cursor()
@@ -70,35 +91,36 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     method = intent["method"] if intent else "DESCONOCIDO"
     amount = intent["amount"] if intent else 0
-    username_for_tx = bound_username or (tg_username or "desconocido")
+    username_for_tx = bound_username or tg_username or "desconocido"
 
     add_transaction(username_for_tx, float(amount), method, status="proof_submitted", proof_file_id=file_id)
-    await update.message.reply_text("Comprobante registrado. Un admin lo revisará pronto.")
+    await update.message.reply_text("✅ Comprobante registrado. Un admin lo revisará pronto.")
 
-    # Notify staff chat if configured
+    # Notify staff chat
     if STAFF_CHAT_ID:
         try:
-            text = f"Comprobante recibido de @{tg_username or 'usuario'}: {method} {amount}. file_id={file_id}"
-            await context.bot.send_message(chat_id=int(STAFF_CHAT_ID), text=text)
-        except Exception:
-            pass
+            await context.bot.send_message(
+                chat_id=int(STAFF_CHAT_ID),
+                text=f"📸 Comprobante recibido de @{tg_username or 'usuario'}: {method} {amount}. file_id={file_id}"
+            )
+        except Exception as e:
+            logger.error(f"Error notificando staff: {e}")
 
 
 async def ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Only allow admin usernames
+    """Admin command to credit user"""
     caller = update.effective_user.username or ""
     if caller not in ADMINS:
-        await update.message.reply_text("No autorizado.")
+        await update.message.reply_text("❌ No autorizado.")
         return
-    # Expect: /ok @usuario monto
+
     if len(context.args) < 2:
         await update.message.reply_text("Uso: /ok @usuario monto")
         return
-    user_arg = context.args[0]
-    monto_arg = context.args[1]
-    username = user_arg.lstrip('@')
+
+    username = context.args[0].lstrip("@")
     try:
-        monto = float(monto_arg)
+        monto = float(context.args[1])
     except Exception:
         await update.message.reply_text("Monto inválido.")
         return
@@ -109,51 +131,52 @@ async def ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{API_BASE_URL}/api/agregar_saldo",
             json={"username": username, "monto": monto, "metodo": "ADMIN"},
             headers={"X-SECRET-KEY": API_SECRET},
-            timeout=10,
+            timeout=10
         )
         data = resp.json()
         if resp.status_code == 200 and data.get("ok"):
-            await update.message.reply_text(f"Saldo acreditado a {username}: {monto}")
+            await update.message.reply_text(f"✅ Saldo acreditado a {username}: {monto}")
         else:
-            await update.message.reply_text(f"Error al acreditar: {data}")
+            await update.message.reply_text(f"❌ Error al acreditar: {data}")
             return
     except Exception as e:
-        await update.message.reply_text(f"Error de API: {e}")
+        await update.message.reply_text(f"⚠️ Error de API: {e}")
         return
 
-    # Notify target user if we know chat_id from links or users
+    # Notify user if chat_id known
     chat_id = None
     try:
         conn = get_conn()
         cur = conn.cursor()
-        cur.execute("SELECT chat_id FROM users WHERE username=?", (username,))
+        cur.execute("SELECT chat_id FROM telegram_links WHERE bound_username=? OR telegram_username=?", (username, username))
         row = cur.fetchone()
         if row and row["chat_id"]:
             chat_id = int(row["chat_id"])
-        else:
-            cur.execute("SELECT chat_id FROM telegram_links WHERE bound_username=? OR telegram_username=?", (username, username))
-            row2 = cur.fetchone()
-            if row2 and row2["chat_id"]:
-                chat_id = int(row2["chat_id"])
         conn.close()
-    except Exception:
-        chat_id = None
+    except Exception as e:
+        logger.error(f"No se pudo obtener chat_id del usuario {username}: {e}")
 
     if chat_id:
         try:
-            await context.bot.send_message(chat_id=chat_id, text=f"Tu saldo ha sido acreditado: {monto}")
+            await context.bot.send_message(chat_id=chat_id, text=f"🎉 Tu saldo ha sido acreditado: {monto}")
         except Exception:
             pass
 
 
+# ----------------------------
+# Main
+# ----------------------------
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN no configurado")
     init_db()
-    app = Application.builder().token(BOT_TOKEN).build()
+
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(CommandHandler("ok", ok))
+
+    logger.info("Bot iniciado correctamente")
     app.run_polling()
 
 
