@@ -12,7 +12,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 STAFF_CHAT_ID = int(os.environ.get("STAFF_CHAT_ID", "0"))
 ADMINS = [int(x) for x in os.environ.get("ADMINS", "").split(",") if x]
 API_SECRET = os.environ.get("API_SECRET", "")
-API_URL = "https://<tu-servicio>.onrender.com/api/agregar_saldo"  # Reemplaza con tu URL real
+API_URL = "https://saldo-api-juik.onrender.com/api/agregar_saldo"  # Reemplaza con tu URL real
 
 # ----------------------------
 # Base de datos local
@@ -138,3 +138,4 @@ app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 app.add_handler(CommandHandler("ok", validar))
 
 app.run_polling()
+
