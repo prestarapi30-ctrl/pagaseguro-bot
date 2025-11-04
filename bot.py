@@ -85,7 +85,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Guardar enlace
     upsert_telegram_link(chat_id=str(chat_id), telegram_username=tg_username, bound_username=tg_username)
 
-    # Mensaje de bienvenida con emojis y pasos
+    # Mensaje de bienvenida
     msg = [
         f"🎉 Hola @{tg_username}, bienvenido al bot de recargas de SERVIS!",
         "",
@@ -115,19 +115,19 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     add_transaction(username, 0, "YAPE/USDT/EFECTIVO", status="proof_submitted", proof_file_id=file_id)
 
-    # Confirmación visual al usuario
-    await update.message.reply_text("📸 Comprobante recibido.\nUn administrador lo revisará pronto. ¡Gracias por tu recarga!")
+    # Confirmación al usuario
+    await update.message.reply_text("📸 Comprobante recibido. Un admin lo revisará pronto. ¡Gracias por tu recarga!")
 
-    # Reenviar la foto al staff con detalles
-    if STAFF_CHAT_ID:
+    # Reenviar la foto al staff como foto, no texto
+    if STAFF_CHAT_ID and photo:
         try:
             await context.bot.send_photo(
                 chat_id=int(STAFF_CHAT_ID),
                 photo=file_id,
-                caption=f"🚨 Nuevo comprobante recibido:\n👤 Usuario: @{username}\n💳 Método: YAPE/USDT/EFECTIVO\n🆔 File ID: {file_id}"
+                caption=f"🚨 Nuevo comprobante recibido:\n👤 Usuario: @{username}\n💳 Método: YAPE/USDT/EFECTIVO"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Error al enviar foto al staff: {e}")
 
 async def ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
     caller = update.effective_user.username or ""
