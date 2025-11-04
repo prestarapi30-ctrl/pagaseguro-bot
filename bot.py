@@ -69,7 +69,7 @@ async def validar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         requests.post(API_URL, json=payload, headers=headers)
 
         await update.message.reply_text(f"✅ Saldo acreditado a @{username}.")
-        await context.bot.send_message(chat_id=f"@{username}", text=f"🎉 Tu recarga de S/{monto} ha sido validada correctamente.")
+        # await context.bot.send_message(chat_id=f"@{username}", text=f"🎉 Tu recarga de S/{monto} ha sido validada correctamente.")
     except Exception as e:
         await update.message.reply_text(f"Error al procesar: {e}")
 
@@ -78,3 +78,4 @@ app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 app.add_handler(CommandHandler("ok", validar))
 app.run_polling()
+
